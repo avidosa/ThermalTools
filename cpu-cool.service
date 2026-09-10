@@ -1,0 +1,22 @@
+[Unit]
+Description=Anillo de seguridad termico/electrico (CPU+GPU) y vigilante de VRAM
+Documentation=file:/usr/local/bin/cpu-cool.sh
+# nvidia-smi necesita el driver cargado; si no esta, el script asume lo peor (90W)
+After=multi-user.target nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cpu-cool.sh watch
+# Si se cae, volver a levantarlo: quedarse sin anillo es justo el fallo de hoy.
+Restart=always
+RestartSec=5
+# No dejar el equipo desprotegido si el servicio se para: PL1 se queda donde este.
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Nice=-5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
