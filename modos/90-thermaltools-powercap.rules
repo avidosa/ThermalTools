@@ -1,0 +1,4 @@
+# ThermalTools: el grupo `powercap` puede cambiar PL1/PL2 del paquete de CPU.
+# Solo esos dos ficheros, solo en el dominio del paquete. No da acceso a los
+# contadores de energia (energy_uj sigue siendo de root: mitigacion Platypus).
+SUBSYSTEM=="powercap", KERNEL=="intel-rapl:0|intel-rapl-mmio:0", RUN+="/bin/chgrp powercap /sys%p/constraint_0_power_limit_uw /sys%p/constraint_1_power_limit_uw", RUN+="/bin/chmod 0664 /sys%p/constraint_0_power_limit_uw /sys%p/constraint_1_power_limit_uw"

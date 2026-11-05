@@ -1,0 +1,127 @@
+#!/bin/bash
+# modo — modos de energia para portatiles Intel en Linux.
+# Cada modo es un limite de vatios de la CPU (PL1/PL2) mas un perfil de
+# power-profiles-daemon.
+#
+#   modo                 menu: modo actual en color y pregunta a cual cambiar
+#   modo chill           navegar y poco mas (portatil en las piernas)
+#   modo equilibrado     programas normales
+#   modo juego           juegos, con techo para no llegar a Tjmax
+#   modo nolimit         sin limite (como de fabrica)
+#   modo --aplicar M     aplica M sin cambiar el modo elegido (lo usa modo-juego)
+#   modo --barra         "<modo activo> <temp CPU>" (lo usa el widget del panel)
+#
+# Los vatios se leen de ~/.config/thermaltools/modos.conf (ver modos.conf).
+# Escribir PL1/PL2 necesita estar en el grupo `powercap` (instalar-permisos.sh).
+
+set -u
+CONF_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/thermaltools
+CONF=$CONF_DIR/modos.conf
+ESTADO=$CONF_DIR/modo
+LOG_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/thermaltools
+LOG=$LOG_DIR/modo.log
+RAPL="/sys/class/powercap/intel-rapl:0 /sys/class/powercap/intel-rapl-mmio:0"
+MODOS="chill equilibrado juego nolimit"
+
+# Valores por defecto (i9-13950HX + RTX 4060). Se sobrescriben con modos.conf.
+declare -A PL1=([chill]=35 [equilibrado]=65 [juego]=110 [nolimit]=220)
+declare -A PL2=([chill]=55 [equilibrado]=100 [juego]=140 [nolimit]=220)
+declare -A PERFIL=([chill]=power-saver [equilibrado]=balanced [juego]=performance [nolimit]=performance)
+
+# La configuracion se PARSEA, no se ejecuta (nada de `source`): solo se aceptan
+# los cuatro nombres conocidos, enteros en rango y perfiles de una lista cerrada.
+if [ -r "$CONF" ]; then
+  while read -r nombre a b perfil _; do
+    case "$nombre" in chill|equilibrado|juego|nolimit) ;; *) continue ;; esac
+    [[ "$a" =~ ^[0-9]{1,3}$ && "$b" =~ ^[0-9]{1,3}$ ]] || { echo "modos.conf: valores no validos en '$nombre'" >&2; continue; }
+    (( a >= 5 && a <= 300 && b >= a && b <= 300 )) || { echo "modos.conf: fuera de rango en '$nombre' (5-300 W, PL2 >= PL1)" >&2; continue; }
+    case "$perfil" in power-saver|balanced|performance) ;; *) echo "modos.conf: perfil no valido en '$nombre'" >&2; continue ;; esac
+    PL1[$nombre]=$a; PL2[$nombre]=$b; PERFIL[$nombre]=$perfil
+  done < "$CONF"
+fi
+
+es_modo() { case "${1:-}" in chill|equilibrado|juego|nolimit) return 0 ;; esac; return 1; }
+elegido() { local m; m=$(cat "$ESTADO" 2>/dev/null); es_modo "$m" && echo "$m" || echo equilibrado; }
+registrar() { mkdir -p "$LOG_DIR"; echo "$(date '+%F %T')  $*" >> "$LOG"; }
+
+temp_cpu() {
+  local h
+  for h in /sys/class/hwmon/hwmon*; do
+    [ "$(cat "$h/name" 2>/dev/null)" = coretemp ] && { echo $(( $(cat "$h/temp1_input") / 1000 )); return; }
+  done
+  echo "?"
+}
+
+# Modo que coincide con los limites puestos ahora mismo (o "?" si ninguno)
+activo() {
+  local d=/sys/class/powercap/intel-rapl:0 a b m
+  a=$(( $(cat $d/constraint_0_power_limit_uw) / 1000000 ))
+  b=$(( $(cat $d/constraint_1_power_limit_uw) / 1000000 ))
+  for m in $MODOS; do [ "$a $b" = "${PL1[$m]} ${PL2[$m]}" ] && { echo "$m"; return; }; done
+  echo "?"
+}
+
+# Solo escribe lo que no coincide, asi se puede llamar en bucle sin coste.
+aplicar() {
+  es_modo "$1" || { echo "modo desconocido: $1" >&2; return 1; }
+  local m=$1 d fallo=0
+  for d in $RAPL; do
+    [ -d "$d" ] || continue
+    [ "$(cat "$d/constraint_0_power_limit_uw")" = "${PL1[$m]}000000" ] ||
+      { echo "${PL1[$m]}000000" > "$d/constraint_0_power_limit_uw"; } 2>/dev/null || fallo=1
+    [ "$(cat "$d/constraint_1_power_limit_uw")" = "${PL2[$m]}000000" ] ||
+      { echo "${PL2[$m]}000000" > "$d/constraint_1_power_limit_uw"; } 2>/dev/null || fallo=1
+  done
+  [ "$(powerprofilesctl get 2>/dev/null)" = "${PERFIL[$m]}" ] || powerprofilesctl set "${PERFIL[$m]}" 2>/dev/null
+  if [ $fallo = 1 ]; then
+    echo "Sin permiso para escribir los vatios: ejecuta  sudo ./instalar-permisos.sh  y vuelve a iniciar sesion." >&2
+    return 2
+  fi
+}
+
+elegir() {
+  mkdir -p "$CONF_DIR"; echo "$1" > "$ESTADO"
+  registrar "modo elegido -> $1"
+  aplicar "$1"
+}
+
+menu() {
+  local R=$'\e[0m' G=$'\e[2m' m i op n ok act ele
+  declare -A C=([chill]=$'\e[1;32m' [equilibrado]=$'\e[1;34m' [juego]=$'\e[1;31m' [nolimit]=$'\e[1;38;5;141m' ["?"]=$'\e[1;37m')
+  declare -A D=([chill]="navegar y poco mas" [equilibrado]="programas normales"
+                [juego]="juegos, con techo de temperatura" [nolimit]="sin limite, como de fabrica")
+  act=$(activo); ele=$(elegido)
+  echo
+  echo "  ${G}Modo de energia${R}"
+  echo "  ${C[$act]}● ${act^^}${R}   ${G}CPU $(temp_cpu) °C${R}"
+  if [ "$act" = "?" ]; then
+    echo "  ${G}(los limites puestos no coinciden con ningun modo)${R}"
+  elif [ "$act" != "$ele" ]; then
+    [ "$act" = juego ] && echo "  ${G}(elegido: $ele; ha subido solo porque hay un juego abierto)${R}" \
+                       || echo "  ${G}(elegido: $ele, pero aun no se ha aplicado)${R}"
+  fi
+  echo
+  i=1
+  for m in $MODOS; do
+    [ "$m" = "$ele" ] && printf "  ▸ " || printf "    "
+    printf "%s%d) %-12s%s %3s/%-3s W  %s%s%s\n" "${C[$m]}" $i "$m" "$R" "${PL1[$m]}" "${PL2[$m]}" "$G" "${D[$m]}" "$R"
+    i=$((i+1))
+  done
+  echo
+  read -rp "  Cambiar a (1-4, Enter = dejarlo): " op
+  case "$op" in 1) n=chill ;; 2) n=equilibrado ;; 3) n=juego ;; 4) n=nolimit ;; *) echo "  Sin cambios."; return ;; esac
+  if [ "$n" = nolimit ]; then
+    read -rp "  ${C[nolimit]}Sin limite la CPU puede llegar a Tjmax en carga sostenida.${R} ¿Seguro? (s/N): " ok
+    [ "$ok" = s ] || { echo "  Cancelado."; return; }
+  fi
+  elegir "$n" && echo "  Ahora: ${C[$n]}● ${n^^}${R}"
+}
+
+case "${1:-}" in
+  "")         menu ;;
+  --aplicar)  aplicar "${2:-}" ;;
+  --barra)    echo "$(activo) $(temp_cpu)" ;;
+  -h|--help)  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *)          es_modo "$1" || { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+              elegir "$1"; r=$?; echo "Modo: $1 (${PL1[$1]}/${PL2[$1]} W, ${PERFIL[$1]})"; exit $r ;;
+esac

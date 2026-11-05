@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="510" height="44" viewBox="0 0 510 44" font-family="DejaVu Sans, Arial, sans-serif" font-weight="bold" font-size="15">
+  <g transform="translate(6,8)">
+    <rect width="54" height="26" rx="13" fill="#3fb950"/><text x="27" y="18" fill="#fff" text-anchor="middle">52°</text>
+    <text x="64" y="18" fill="#3fb950" font-weight="normal" font-size="13">chill</text>
+  </g>
+  <g transform="translate(112,8)">
+    <rect width="54" height="26" rx="13" fill="#4d8fef"/><text x="27" y="18" fill="#fff" text-anchor="middle">64°</text>
+    <text x="64" y="18" fill="#4d8fef" font-weight="normal" font-size="13">equilibrado</text>
+  </g>
+  <g transform="translate(268,8)">
+    <rect width="54" height="26" rx="13" fill="#f04a4a"/><text x="27" y="18" fill="#fff" text-anchor="middle">86°</text>
+    <text x="64" y="18" fill="#f04a4a" font-weight="normal" font-size="13">juego</text>
+  </g>
+  <g transform="translate(384,8)">
+    <rect width="54" height="26" rx="13" fill="#b48cf2"/><text x="27" y="18" fill="#fff" text-anchor="middle">97°</text>
+    <text x="64" y="18" fill="#b48cf2" font-weight="normal" font-size="13">nolimit</text>
+  </g>
+</svg>

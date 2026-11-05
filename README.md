@@ -1,103 +1,140 @@
-# ThermalTools
+# ThermalTools v2
 
-Cuatro scripts de Bash para un portátil que se apagaba de golpe jugando. No son un
-monitor bonito: son el resultado de diagnosticar el problema y ponerle una red de
-seguridad que no cueste rendimiento cuando no hace falta.
+Modos de energía a medida para un portátil Intel en Linux. Sustituye a la herramienta del
+fabricante con algo que se puede leer, ajustar al vatio y que cambia solo al abrir un juego.
 
-Septiembre de 2026.
+<p align="center"><img src="docs/menu.png" alt="Menú del comando modo" width="620"></p>
 
-## El problema, y por qué importa el diagnóstico
+| Modo | PL1 / PL2 | Perfil | Para |
+|---|---|---|---|
+| 🟢 **chill** | 35 / 55 W | `power-saver` | navegar y poco más, portátil sobre las piernas |
+| 🔵 **equilibrado** | 65 / 100 W | `balanced` | programas normales |
+| 🔴 **juego** | 110 / 140 W | `performance` | juegos, con techo para no llegar a Tjmax |
+| 🟣 **nolimit** | 220 / 220 W | `performance` | como de fábrica (pide confirmación) |
 
-El equipo se apagaba en seco durante las partidas. La explicación fácil era "se
-calienta", y era **falsa**: el crítico del paquete de CPU está en 100 °C, en carga real
-iba a 77-83 °C, y en todo el *journal* no había un solo mensaje térmico. El log cortaba
-de golpe, sin secuencia de apagado.
+Los valores son los de un i9-13950HX con RTX 4060. **Se cambian en un fichero de texto**
+(`~/.config/thermaltools/modos.conf`), no en el código.
 
-Eso apunta a otra cosa: **corte eléctrico por pico de consumo**. La pista que lo confirma
-es que la batería se pone a descargarse *estando enchufado* — la fuente no da abasto y la
-batería entra a ayudar. Ese es el síntoma que vigila `cpu-cool.sh`.
+En la barra de KDE Plasma, un widget muestra la temperatura de la CPU con el color del modo:
 
-Capar los vatios arregla el apagón igual que capar la temperatura, pero **si diagnosticas
-"calor" te quedas con un equipo lento sin motivo**.
+<p align="center"><img src="docs/pastillas.svg" alt="Pastillas de los cuatro modos" width="460"></p>
 
-## Los scripts
+## Por qué
 
-### `cpu-cool.sh` — el anillo de seguridad
+Un i9 de la serie HX viene de fábrica con **PL1 = PL2 = 220 W** y ningún límite real: acelera
+hasta chocar con los 100 °C. En un portátil eso pasa en segundos, haga lo que haga.
 
-Reparto dinámico de vatios entre CPU y GPU, con vigilancia cada segundo. La idea no es
-poner un límite bajo permanente (eso cuesta fps siempre), sino un límite **alto pero que
-se aplique rápido**:
+Medido en este equipo, con todos los hilos al 100 % durante 15 s:
 
-- **Ventana corta (`tau` de 5 s en vez de 56 s)**: el hardware aplica el límite en
-  segundos, así un techo alto ya es seguro porque no hay un minuto de barra libre.
-- **Presupuesto compartido**: la CPU se queda los vatios que la GPU no está usando,
-  leídos en vivo con `nvidia-smi`.
-- **Techo adaptativo**: si detecta que la batería está ayudando a la fuente, baja el techo
-  10 W y lo recupera muy despacio (5 W cada 10 minutos limpios). El síntoma serio se
-  castiga rápido y se perdona lento.
-- **Dos presupuestos**: uno enchufado y otro a batería, cambiando solo al detectar el
-  cable.
-- Vigila también la **VRAM**, porque a 7258 MiB ya fallaba abrir una terminal.
+| | Fábrica (220 W) | chill (55 W) |
+|---|---|---|
+| Frecuencia P-cores | 4400 MHz | 2600 MHz |
+| Temperatura CPU | 58 → 97 °C en 20 s | **68 °C estable** |
+
+Y jugando no hace falta tanta CPU: el juego va limitado por la GPU (93-100 % de uso), la CPU
+usa unos 4 hilos de 24 y comparte disipador con la GPU. Cada vatio que la CPU no gasta es
+calor que la GPU no tiene que compartir.
+
+### Limpiar no basta
+
+Tras limpiar ventiladores y cambiar la pasta térmica por una lámina de cambio de fase
+(misma partida, misma carga de GPU, ~92 W):
+
+| | Antes | Después |
+|---|---|---|
+| GPU | 86 °C | **76 °C** |
+| CPU | 92,6 °C | 90 °C, y a los 3 min tocó 99 °C |
+
+La GPU mejora 10 °C; la CPU casi nada. No es un problema de evacuar el calor, es de
+**generarlo**: con 220 W disponibles, la CPU se los come. Por eso esto va de vatios.
+
+## Instalación
 
 ```bash
-sudo ./cpu-cool.sh watch      # modo servicio: vigila y reparte
-sudo ./cpu-cool.sh status     # qué límites hay puestos ahora
-sudo ./cpu-cool.sh medio      # perfil intermedio
-sudo ./cpu-cool.sh cool       # apretar de verdad
-sudo ./cpu-cool.sh restore    # dejarlo como venía de fábrica
+git clone https://github.com/avidosa/ThermalTools.git
+cd ThermalTools
+./instalar.sh                # comandos en ~/.local/bin, config, servicio y widget (sin root)
+sudo ./instalar-permisos.sh  # una vez: grupo powercap + regla udev
 ```
 
-Se instala como servicio permanente con `sudo ./instalar.sh` (copia el script a
-`/usr/local/bin/`, habilita `cpu-cool.service` y comprueba que arranca). El servicio lleva
-`Restart=always`, porque quedarse sin anillo es justo el fallo que se quiere evitar.
+Cierra sesión y vuelve a entrar (para coger el grupo) y escribe `modo`. El widget se añade
+con clic derecho en el panel → *Añadir widgets* → **Modo y temperatura**.
+
+Requisitos: Intel con `intel-rapl` en `/sys/class/powercap`, `power-profiles-daemon`,
+`nvidia-smi` para detectar juegos (opcional) y KDE Plasma 6 para el widget (opcional).
+
+Desinstalar: `./instalar.sh --quitar` y `sudo ./instalar-permisos.sh --quitar`.
+
+## Uso
+
+```bash
+modo                 # menú: modo actual en color y a cuál cambiar
+modo chill           # cambiar directamente
+modo --barra         # "chill 63": lo que lee el widget
+prueba-termica 30    # registrar 30 min de temperaturas con guardián (ver abajo)
+```
+
+Con **chill** o **equilibrado** elegido, al abrir un juego `modo-juego` sube solo a
+**juego** y al cerrarlo vuelve. El juego se detecta por la VRAM que ocupa un proceso, no por
+una lista de nombres. Con **juego** o **nolimit** elegidos, el modo se queda fijo.
+
+El modo elegido sobrevive a los reinicios. El vigilante además lo reaplica cada 5 s, porque
+algunos firmwares restablecen PL1/PL2 al enchufar o desenchufar el cargador.
+
+## Seguridad
+
+Escribir PL1/PL2 es cosa de root. En lugar de un servicio con root o un `sudo` sin
+contraseña, la v2 da el permiso mínimo:
+
+- **Una regla udev** cambia el grupo de exactamente dos ficheros (`constraint_0` y
+  `constraint_1` de `intel-rapl:0` e `intel-rapl-mmio:0`) a `powercap` con `0664`. Nada más:
+  ni otros dominios, ni `energy_uj` (que sigue siendo de root por la mitigación Platypus).
+- **Grupo propio**, no el del usuario. Quien no esté en `powercap` no puede tocar nada.
+- **`modos.conf` se parsea, no se ejecuta**: no hay `source`. Solo se aceptan los cuatro
+  nombres conocidos, enteros entre 5 y 300 W con PL2 ≥ PL1 y perfiles de una lista cerrada.
+  Las líneas no válidas se ignoran y se avisa.
+- **Riesgo que queda, dicho claro:** cualquier proceso que corra como tu usuario puede
+  cambiar esos dos límites. El peor caso es dejar la CPU como viene de fábrica o muy lenta;
+  no da escalada de privilegios. Si eso no te vale, no instales `instalar-permisos.sh` y
+  usa `sudo modo ...`.
+- Todo es reversible: los límites vuelven a los de fábrica al reiniciar sin el servicio, y
+  ambos instaladores tienen `--quitar`.
+
+## Herramientas de diagnóstico
+
+### `prueba-termica` — medir con red de seguridad
+
+Registra cada 2 s temperatura de CPU y GPU, vatios, frecuencias, ventiladores, VRAM,
+eventos de *throttling*, cargador y perfil, en un CSV que se **sincroniza a disco en cada
+línea** (si el equipo se apaga, el registro llega hasta el último segundo).
+
+Con un juego abierto actúa de **guardián** y lo cierra si la CPU toca 99 °C, si pasa 6 s
+por encima de 97 °C, si la GPU pasa 6 s por encima de 88 °C o si se desenchufa el cargador.
+Los umbrales son variables de entorno (`CPU_CORTE`, `CPU_AVISO`, `GPU_AVISO`).
+
+Lección que costó aprender: **una medida suelta no vale**. A los 5 minutos de partida la
+CPU estaba a 84 °C y parecía asumible; a los 31 minutos, con el chasis saturado, estaba a
+92-100 °C. Hay que medir media hora de carga real.
 
 ### `caja-negra.sh` — saber a qué temperatura murió
 
-Registra temperatura y VRAM cada 2 segundos **con volcado inmediato a disco**. Ese detalle
-es todo el invento: en un corte duro lo que queda en el buffer se pierde, y es exactamente
-lo que interesa leer después.
+Registro mínimo de temperatura y VRAM con volcado inmediato. Ver `herramientas/`.
 
-```bash
-./caja-negra.sh "partida de la tarde"   # etiqueta la sesión y deja corriendo
-./caja-negra.sh ultimas                 # las últimas líneas antes del corte
-./caja-negra.sh resumen                 # estadísticas de la última sesión
-```
+## v1 (septiembre 2026)
 
-Lee la temperatura directamente de `hwmon`, sin invocar `sensors`, para que el muestreo
-sea barato.
+En `v1/` queda el primer intento: `cpu-cool.sh`, un anillo de seguridad con reparto
+dinámico de vatios entre CPU y GPU, y `vigilante-96.sh`. Funcionaban, pero bajaban el calor
+bajando el rendimiento en bruto. La v2 es más simple: límites fijos por modo y que el
+usuario decida.
 
-### `modo-juego.sh` — perfil de energía automático
-
-Pone el perfil `performance` mientras hay un juego abierto y `balanced` el resto del
-tiempo. Medido: con `balanced` 35 fps; con `performance` 45 fps, pero la CPU sube de
-72 a 95 °C. La conclusión no es elegir uno, es **no pagar ese calor cuando no estás
-jugando**.
-
-Detecta el juego **por la memoria de vídeo que ocupa un proceso**, no por una lista de
-nombres: así vale para cualquier juego y no hay nada que mantener. Con antirrebote de dos
-lecturas seguidas para no cambiar de perfil por un parpadeo.
-
-No necesita root: `powerprofilesctl` va por polkit.
-
-### `vigilante-96.sh` — red de seguridad puntual
-
-Si la CPU **se asienta** en 96 °C, baja el perfil y se quita de en medio.
-
-Mira la **media de las últimas 30 muestras (~1 minuto)**, no el pico. Los picos sueltos de
-96-100 °C son constantes incluso con el equipo estable a 93 de media: disparar por pico
-quitaría fps por un parpadeo. Lo que importa es que el equipo se quede ahí.
-
-Detalle que costó encontrar: hay que **parar también `modo-juego.sh`**, porque si no el
-vigilante de juego vuelve a poner `performance` cinco segundos después.
+**Corrección al diagnóstico de la v1.** La v1 descartaba el calor como causa de los apagones
+(la CPU iba a 77-83 °C con el perfil `balanced`) y apuntaba a un pico eléctrico. Con el perfil
+`performance` el régimen cambió: un apagón posterior quedó grabado con 31 min a 92 °C de
+media, 14 muestras en 100 °C y ni una sola muestra con la batería ayudando a la fuente. **Un
+diagnóstico térmico caduca al cambiar el perfil de energía.**
 
 ## Antes de usarlo en otro equipo
 
-Los números están calibrados para un portátil concreto: Intel con `intel-rapl` e
-`intel_pstate`, GPU NVIDIA leída con `nvidia-smi`, 8 GB de VRAM y una fuente que se queda
-corta por encima de ~170 W. Todo eso son variables al principio de cada script
-(`TOTAL`, `BAT_TOTAL`, `T_ALTO`, `VRAM_AVISO`…), pero **los umbrales hay que medirlos en
-cada máquina**, no copiarlos.
-
-Los scripts escriben en `/sys/class/powercap` y `/sys/devices/system/cpu`: eso toca
-límites de potencia reales del procesador. Leer lo que hacen antes de ejecutarlos como
-root no es paranoia, es sentido común.
+Los vatios de `modos.conf` son de una CPU concreta. Empieza por los de ejemplo, mide con
+`prueba-termica` y ajusta. Esto toca límites de potencia reales del procesador: léete los
+scripts antes de darles permisos. Son cortos a propósito.

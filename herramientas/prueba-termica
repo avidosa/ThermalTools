@@ -1,0 +1,78 @@
+#!/bin/bash
+# prueba-termica — registra temperaturas, vatios y ventiladores cada 2 s y
+# CIERRA EL JUEGO antes de que el equipo llegue al apagon termico.
+#
+#   prueba-termica [minutos]     (por defecto 40)
+#   CSV en ~/.local/state/thermaltools/pruebas/AAAA-MM-DD_HHMM.csv
+#   Cada linea se sincroniza a disco: si el equipo se apaga, el log llega hasta el final.
+#
+# El guardian solo actua con un juego abierto (proceso con >= UMBRAL_MIB de VRAM).
+# Cierra el juego si:
+#   - CPU paquete >= CPU_CORTE en una muestra          (por defecto 99 °C)
+#   - CPU paquete >= CPU_AVISO en 3 muestras seguidas  (por defecto 97 °C, 6 s)
+#   - GPU >= GPU_AVISO en 3 muestras seguidas          (por defecto 88 °C)
+#   - se desenchufa el cargador
+
+MIN=${1:-40}
+[[ "$MIN" =~ ^[0-9]+$ ]] || { echo "uso: prueba-termica [minutos]"; exit 1; }
+CPU_CORTE=${CPU_CORTE:-99}; CPU_AVISO=${CPU_AVISO:-97}; GPU_AVISO=${GPU_AVISO:-88}
+UMBRAL_MIB=${UMBRAL_MIB:-1500}
+EXCLUIR='plasmashell|kwin_wayland|Xwayland|steamwebhelper|krunner|kitty|firefox|chrome|obs'
+
+DIR=${XDG_STATE_HOME:-$HOME/.local/state}/thermaltools/pruebas; mkdir -p "$DIR"
+LOG="$DIR/$(date +%F_%H%M).csv"
+for h in /sys/class/hwmon/hwmon*; do
+  case "$(cat "$h/name" 2>/dev/null)" in
+    coretemp) CPU=$h ;;
+    *) ls "$h"/fan1_input >/dev/null 2>&1 && FAN=$h ;;
+  esac
+done
+[ -n "${CPU:-}" ] || { echo "No encuentro coretemp en hwmon."; exit 1; }
+AC=$(ls -d /sys/class/power_supply/{AC,ADP}* 2>/dev/null | head -1)
+THR=/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count
+NCPU=$(nproc)
+
+# PIDs de los procesos que parecen juegos (mucha VRAM y no son del escritorio)
+juegos() {
+  nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null |
+  while IFS=', ' read -r pid mib; do
+    [ "${mib:-0}" -ge "$UMBRAL_MIB" ] 2>/dev/null || continue
+    grep -qE "$EXCLUIR" "/proc/$pid/comm" 2>/dev/null || echo "$pid"
+  done
+}
+
+cerrar() {
+  local pids; pids=$(juegos)
+  echo "# $(date +%T) GUARDIAN: $1 -> cerrando PIDs: $pids" >> "$LOG"; sync "$LOG"
+  [ -n "$pids" ] && { kill -TERM $pids 2>/dev/null; sleep 5; kill -KILL $pids 2>/dev/null; }
+  notify-send -u critical "prueba-termica" "Juego cerrado: $1" 2>/dev/null
+  echo "GUARDIAN: $1"; exit 2
+}
+
+echo "# inicio $(date '+%F %T') | ${MIN} min | perfil=$(powerprofilesctl get 2>/dev/null)" > "$LOG"
+echo "hora,cpu_pkg,cpu_core_max,mhz_media,throttle,gpu_c,gpu_w,gpu_mhz,gpu_uso,vram,fan1,fan2,ac,perfil,juego" >> "$LOG"
+echo "Log: $LOG"
+
+fin=$(( $(date +%s) + MIN*60 )); c_aviso=0; g_aviso=0; t0=$(cat $THR 2>/dev/null || echo 0)
+while [ "$(date +%s)" -lt "$fin" ]; do
+  pkg=$(( $(cat $CPU/temp1_input) / 1000 ))
+  cmax=$(( $(cat $CPU/temp*_input | sort -n | tail -1) / 1000 ))
+  mhz=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq | awk '{s+=$1}END{printf "%d",s/NR/1000}')
+  thr=$(( $(cat $THR 2>/dev/null || echo 0) - t0 ))
+  IFS=', ' read -r gc gw gm gu vr < <(nvidia-smi --query-gpu=temperature.gpu,power.draw,clocks.gr,utilization.gpu,memory.used --format=csv,noheader,nounits 2>/dev/null)
+  f1=$(cat ${FAN:-/nonexistent}/fan1_input 2>/dev/null); f2=$(cat ${FAN:-/nonexistent}/fan2_input 2>/dev/null)
+  ac=$(cat "$AC/online" 2>/dev/null || echo "?"); pf=$(powerprofilesctl get 2>/dev/null)
+  [ -n "$(juegos)" ] && jg=si || jg=no
+  echo "$(date +%T),$pkg,$cmax,$mhz,$thr,$gc,${gw%.*},$gm,$gu,$vr,$f1,$f2,$ac,$pf,$jg" >> "$LOG"; sync "$LOG"
+
+  if [ "$jg" = si ]; then
+    [ "$pkg" -ge "$CPU_CORTE" ] && cerrar "CPU a ${pkg} °C"
+    [ "$pkg" -ge "$CPU_AVISO" ] && c_aviso=$((c_aviso+1)) || c_aviso=0
+    [ "$c_aviso" -ge 3 ] && cerrar "CPU >= ${CPU_AVISO} °C durante 6 s"
+    [ "${gc:-0}" -ge "$GPU_AVISO" ] && g_aviso=$((g_aviso+1)) || g_aviso=0
+    [ "$g_aviso" -ge 3 ] && cerrar "GPU >= ${GPU_AVISO} °C durante 6 s"
+    [ "$ac" = 0 ] && cerrar "cargador desenchufado"
+  fi
+  sleep 2
+done
+echo "# fin $(date +%T)" >> "$LOG"; echo "Terminado: $LOG"

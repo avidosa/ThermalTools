@@ -1,0 +1,13 @@
+{
+  "KPlugin": {
+    "Id": "org.thermaltools.modotemp",
+    "Name": "Modo y temperatura",
+    "Description": "Temperatura de la CPU con el color del modo de energia (ThermalTools)",
+    "Icon": "temperature-normal",
+    "Authors": [{ "Name": "avidosa" }],
+    "Version": "2.0",
+    "Website": "https://github.com/avidosa/ThermalTools"
+  },
+  "KPackageStructure": "Plasma/Applet",
+  "X-Plasma-API-Minimum-Version": "6.0"
+}
