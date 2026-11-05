@@ -28,11 +28,15 @@ install -m 755 "$DIR/modos/modo" "$DIR/modos/modo-juego.sh" "$DIR/herramientas/p
 [ -e "$CONF/modos.conf" ] || install -m 644 "$DIR/modos/modos.conf" "$CONF/modos.conf"
 install -m 644 "$DIR/modos/modo-juego.service" "$UNIT/"
 systemctl --user daemon-reload
-systemctl --user enable --now modo-juego.service
+systemctl --user enable modo-juego.service
+systemctl --user restart modo-juego.service   # restart: si ya corria, que coja la version nueva
 
 if command -v kpackagetool6 >/dev/null; then
-  kpackagetool6 -t Plasma/Applet -u "$DIR/modos/plasmoid/$WIDGET" 2>/dev/null ||
-  kpackagetool6 -t Plasma/Applet -i "$DIR/modos/plasmoid/$WIDGET"
+  if kpackagetool6 -t Plasma/Applet -s "$WIDGET" >/dev/null 2>&1; then
+    kpackagetool6 -t Plasma/Applet -u "$DIR/modos/plasmoid/$WIDGET"
+  else
+    kpackagetool6 -t Plasma/Applet -i "$DIR/modos/plasmoid/$WIDGET"
+  fi
   echo "Widget instalado: clic derecho en el panel -> Anadir widgets -> 'Modo y temperatura'."
 fi
 
