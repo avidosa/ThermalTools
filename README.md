@@ -138,3 +138,7 @@ diagnóstico térmico caduca al cambiar el perfil de energía.**
 Los vatios de `modos.conf` son de una CPU concreta. Empieza por los de ejemplo, mide con
 `prueba-termica` y ajusta. Esto toca límites de potencia reales del procesador: léete los
 scripts antes de darles permisos. Son cortos a propósito.
+
+## Licencia
+
+MIT. Ver [LICENSE](LICENSE).
